@@ -8,9 +8,9 @@ This repository contains KQL detection rules, threat hunting queries, and incide
 
 ## Why I Built This
 
-I have 3+ years of enterprise endpoint security experience across 80,000+ endpoints — investigating alerts, triaging incidents, and writing KQL queries in MDE Advanced Hunting daily.
+I have 3+ years of enterprise endpoint security experience across 80,000+ endpoints — investigating alerts, triaging incidents, and applying KQL queries in MDE Advanced Hunting for compliance reporting and security posture analysis.
 
-This lab extends that knowledge into the SIEM layer — learning how to ingest logs from multiple sources, correlate events across the environment, and build detections that go beyond endpoint telemetry.
+This lab extends that knowledge into the SIEM layer — building KQL detection rules and hunting queries designed for Microsoft Sentinel, with plans to connect data sources and test against live logs once the free tier workspace is configured.
 
 ---
 
