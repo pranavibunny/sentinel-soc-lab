@@ -69,4 +69,3 @@ sentinel-soc-lab/
 
 ---
 
-*Built for learning. Queries tested against sample data and Sentinel free tier.*
