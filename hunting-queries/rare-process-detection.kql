@@ -1,0 +1,53 @@
+// ============================================================
+// Hunting Query: Rare Process Detection
+// MITRE ATT&CK: T1036 - Masquerading, T1055 - Process Injection
+// Purpose: Identify processes seen on very few machines —
+//          rare processes are significantly more suspicious
+//          than common ones and worth investigating.
+// Data Source: DeviceProcessEvents
+// ============================================================
+
+// Step 1: Build baseline of process prevalence across the environment
+let ProcessPrevalence =
+    DeviceProcessEvents
+    | where TimeGenerated > ago(7d)  // 7 day baseline
+    | summarize
+        MachineCount = dcount(DeviceName),
+        TotalExecutions = count()
+        by FileName, SHA256
+    | where MachineCount <= 3  // Seen on 3 or fewer machines
+    | project FileName, SHA256, MachineCount, TotalExecutions;
+
+// Step 2: Find recent executions of rare processes
+DeviceProcessEvents
+| where TimeGenerated > ago(24h)
+| join kind=inner ProcessPrevalence on FileName, SHA256
+| project
+    TimeGenerated,
+    DeviceName,
+    AccountName,
+    FileName,
+    FolderPath,
+    ProcessCommandLine,
+    SHA256,
+    MachineCount,
+    InitiatingProcessFileName
+| sort by MachineCount asc, TimeGenerated desc
+
+// ============================================================
+// Why this works:
+// Legitimate software is installed across many machines.
+// Malware or attacker tools are rare — often seen on just
+// 1-3 machines before spreading or being caught.
+//
+// This query is inspired by real hunting work in enterprise
+// environments managing 50,000+ endpoints. A process seen
+// on 1 machine out of 50,000 is always worth investigating.
+//
+// Investigation Steps:
+// 1. Is the file signed? Check SHA256 against VirusTotal
+// 2. What folder is it running from? Temp/AppData = suspicious
+// 3. What launched it (InitiatingProcessFileName)?
+// 4. What network connections did it make?
+// 5. Is it present on other machines in the same subnet?
+// ============================================================

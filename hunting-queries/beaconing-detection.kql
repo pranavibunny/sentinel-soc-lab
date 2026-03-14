@@ -1,0 +1,72 @@
+// ============================================================
+// Hunting Query: Beaconing Detection
+// MITRE ATT&CK: T1071 - Application Layer Protocol
+//               T1571 - Non-Standard Port
+// Purpose: Identify regular, periodic outbound connections
+//          that indicate C2 (Command and Control) beaconing.
+//          Malware checks in with C2 servers at regular intervals.
+// Data Source: DeviceNetworkEvents
+// ============================================================
+
+// Step 1: Find connections with suspiciously regular intervals
+let TimeWindow = 24h;
+let MinConnections = 10;  // Must connect at least 10 times
+let MaxJitter = 30;       // Less than 30 seconds variation = too regular
+
+DeviceNetworkEvents
+| where TimeGenerated > ago(TimeWindow)
+| where ActionType == "ConnectionSuccess"
+| where RemoteIPType == "Public"  // Only external connections
+| summarize
+    ConnectionTimes = make_list(TimeGenerated),
+    ConnectionCount = count(),
+    BytesSent = sum(SentBytes),
+    BytesReceived = sum(ReceivedBytes)
+    by DeviceName, RemoteIP, RemotePort, InitiatingProcessFileName
+| where ConnectionCount >= MinConnections
+| extend
+    // Calculate time differences between consecutive connections
+    TimeDiffs = series_diff(ConnectionTimes),
+    AvgInterval = totimespan(1s) * (toreal(TimeWindow) / ConnectionCount)
+| extend IntervalSeconds = toint(AvgInterval / 1s)
+| where IntervalSeconds between (30 .. 3600)  // 30 sec to 1 hour intervals
+| project
+    DeviceName,
+    RemoteIP,
+    RemotePort,
+    InitiatingProcessFileName,
+    ConnectionCount,
+    IntervalSeconds,
+    BytesSent,
+    BytesReceived
+| sort by ConnectionCount desc
+
+// ============================================================
+
+// Step 2: Look for beaconing to recently registered or rare domains
+DeviceNetworkEvents
+| where TimeGenerated > ago(TimeWindow)
+| where ActionType == "ConnectionSuccess"
+| summarize
+    ConnectionCount = count(),
+    ConnectingDevices = dcount(DeviceName)
+    by RemoteUrl, RemoteIP
+| where ConnectingDevices <= 2  // Only 1-2 machines connecting = rare domain
+| where ConnectionCount >= 5    // But connecting repeatedly
+| project RemoteUrl, RemoteIP, ConnectionCount, ConnectingDevices
+| sort by ConnectionCount desc
+
+// ============================================================
+// Why beaconing matters:
+// After initial compromise an attacker's malware regularly
+// checks in with the C2 server for instructions. This creates
+// a recognisable pattern — regular intervals, consistent
+// destination, small packet sizes.
+//
+// Investigation Steps:
+// 1. Check RemoteIP reputation on VirusTotal / Shodan
+// 2. What process is making the connections?
+// 3. Is the process signed and from a known vendor?
+// 4. Capture and analyse packet content if possible
+// 5. Block the RemoteIP at firewall level if confirmed malicious
+// ============================================================

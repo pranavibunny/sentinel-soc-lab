@@ -1,0 +1,77 @@
+// ============================================================
+// Hunting Query: After Hours Login Detection
+// MITRE ATT&CK: T1078 - Valid Accounts
+// Purpose: Detect user logins outside normal business hours —
+//          a common indicator of compromised credentials or
+//          insider threat activity.
+// Data Source: SecurityEvent / SigninLogs (Azure AD)
+// ============================================================
+
+// Define business hours (adjust to your organisation's timezone)
+let BusinessHoursStart = 8;   // 8 AM
+let BusinessHoursEnd = 19;    // 7 PM
+let WeekendDays = dynamic([0, 6]);  // Sunday=0, Saturday=6
+
+// Detection: Logins outside business hours
+SecurityEvent
+| where TimeGenerated > ago(7d)
+| where EventID == 4624  // Successful logon
+| where LogonType in (2, 10)  // Interactive or RemoteInteractive
+| where AccountType == "User"
+| where Account !endswith "$"  // Exclude machine accounts
+| extend
+    LoginHour = hourofday(TimeGenerated),
+    LoginDay = dayofweek(TimeGenerated)
+| where LoginHour !between (BusinessHoursStart .. BusinessHoursEnd)
+    or LoginDay in (WeekendDays)
+| summarize
+    AfterHoursLogins = count(),
+    LoginTimes = make_set(TimeGenerated),
+    SourceIPs = make_set(IpAddress)
+    by Account, Computer
+| where AfterHoursLogins >= 3  // Multiple after-hours logins = more suspicious
+| project
+    Account,
+    Computer,
+    AfterHoursLogins,
+    SourceIPs,
+    LoginTimes
+| sort by AfterHoursLogins desc
+
+// ============================================================
+
+// Azure AD version (for cloud/hybrid environments)
+SigninLogs
+| where TimeGenerated > ago(7d)
+| where ResultType == 0  // Successful sign-in
+| extend
+    LoginHour = hourofday(TimeGenerated),
+    LoginDay = dayofweek(TimeGenerated)
+| where LoginHour !between (BusinessHoursStart .. BusinessHoursEnd)
+    or LoginDay in (WeekendDays)
+| summarize
+    AfterHoursLogins = count(),
+    Locations = make_set(Location),
+    AppNames = make_set(AppDisplayName)
+    by UserDisplayName, UserPrincipalName
+| where AfterHoursLogins >= 3
+| project
+    UserDisplayName,
+    UserPrincipalName,
+    AfterHoursLogins,
+    Locations,
+    AppNames
+| sort by AfterHoursLogins desc
+
+// ============================================================
+// Investigation Steps:
+// 1. Contact the user — did they actually log in at this time?
+// 2. Is the source IP their home IP or an unknown location?
+// 3. What did they access after logging in?
+// 4. Is this a pattern or a one-off?
+// 5. Check for MFA bypass attempts around the same time
+//
+// Note: Always verify with the user before escalating —
+// legitimate after-hours work is common. The goal is to
+// identify patterns that don't match the user's normal behaviour.
+// ============================================================
