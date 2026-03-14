@@ -1,0 +1,51 @@
+// ============================================================
+// Rule: Data Exfiltration over DNS (DNS Tunneling)
+// MITRE ATT&CK: T1048.003 - Exfiltration Over Alternative Protocol: DNS
+// Severity: Medium
+// Description: Detects potential DNS tunneling by identifying
+//              unusually high DNS query volumes, long subdomains,
+//              or rare domains being queried from endpoints.
+// Data Source: DnsEvents / DeviceNetworkEvents
+// ============================================================
+
+// Detection 1: High DNS query volume from single endpoint
+// Attackers using DNS tunneling generate far more queries than normal
+DeviceNetworkEvents
+| where TimeGenerated > ago(1h)
+| where RemotePort == 53  // DNS port
+| summarize
+    QueryCount = count(),
+    UniqueRemoteIPs = dcount(RemoteIP)
+    by DeviceName, bin(TimeGenerated, 10m)
+| where QueryCount > 200  // Threshold — normal DNS is much lower
+| project TimeGenerated, DeviceName, QueryCount, UniqueRemoteIPs
+| sort by QueryCount desc
+
+// ============================================================
+
+// Detection 2: Unusually long DNS subdomains
+// DNS tunneling encodes data in subdomain strings — making them very long
+DnsEvents
+| where TimeGenerated > ago(1h)
+| extend SubdomainLength = strlen(Name)
+| where SubdomainLength > 50  // Normal domains rarely exceed this
+| summarize
+    QueryCount = count(),
+    LongDomains = make_set(Name)
+    by Computer, ClientIP
+| where QueryCount > 10
+| project Computer, ClientIP, QueryCount, LongDomains
+| sort by QueryCount desc
+
+// ============================================================
+// Investigation Steps:
+// 1. Identify the domains being queried — are they known legitimate?
+// 2. Check if the endpoint has any recently installed software
+// 3. Review what process is making the DNS requests
+// 4. Check if there is outbound data volume increase on the endpoint
+// 5. Block the suspicious domain at DNS/firewall level if confirmed
+//
+// Real world context: DNS exfiltration is stealthy because
+// most organisations allow DNS traffic freely. Attackers
+// encode stolen data in DNS queries to avoid DLP controls.
+// ============================================================

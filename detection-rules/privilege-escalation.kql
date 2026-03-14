@@ -1,0 +1,72 @@
+// ============================================================
+// Rule: Privilege Escalation Detection
+// MITRE ATT&CK: T1068 - Exploitation for Privilege Escalation
+//               T1078 - Valid Accounts
+// Severity: High
+// Description: Detects accounts being added to privileged groups
+//              or sudden privilege changes — common indicators
+//              of privilege escalation attacks.
+// Data Source: SecurityEvent
+// ============================================================
+
+// Detection 1: User added to privileged group
+SecurityEvent
+| where TimeGenerated > ago(24h)
+| where EventID in (4728, 4732, 4756)
+// 4728 = Member added to security-enabled global group
+// 4732 = Member added to security-enabled local group
+// 4756 = Member added to security-enabled universal group
+| extend
+    AddedAccount = tostring(EventData.MemberName),
+    GroupName = tostring(EventData.TargetUserName),
+    ChangedBy = tostring(EventData.SubjectUserName)
+| where GroupName has_any (
+    "Domain Admins",
+    "Administrators",
+    "Enterprise Admins",
+    "Schema Admins",
+    "Account Operators",
+    "Backup Operators"
+    )
+| project
+    TimeGenerated,
+    Computer,
+    AddedAccount,
+    GroupName,
+    ChangedBy
+| sort by TimeGenerated desc
+
+// ============================================================
+
+// Detection 2: Standard user suddenly running processes as SYSTEM
+DeviceProcessEvents
+| where TimeGenerated > ago(24h)
+| where AccountName == "SYSTEM"
+| where InitiatingProcessAccountName !in ("SYSTEM", "LOCAL SERVICE", "NETWORK SERVICE")
+| where InitiatingProcessFileName !in~ (
+    "services.exe",
+    "wininit.exe",
+    "lsass.exe",
+    "svchost.exe"
+    )
+| project
+    TimeGenerated,
+    DeviceName,
+    AccountName,
+    FileName,
+    ProcessCommandLine,
+    InitiatingProcessAccountName,
+    InitiatingProcessFileName
+| sort by TimeGenerated desc
+
+// ============================================================
+// Investigation Steps:
+// 1. Was this change authorised? Check with AD/identity team
+// 2. Who made the change — is their account compromised?
+// 3. Review what the newly privileged account did after the change
+// 4. Check for other suspicious activity from the same source
+// 5. Revert the change immediately if unauthorised
+//
+// Priority: Any unauthorised addition to Domain Admins is a
+// critical incident — treat as active compromise until proven otherwise.
+// ============================================================

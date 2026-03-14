@@ -1,0 +1,71 @@
+// ============================================================
+// Rule: Suspicious Scheduled Task Creation
+// MITRE ATT&CK: T1053.005 - Scheduled Task/Job: Scheduled Task
+// Severity: Medium
+// Description: Detects scheduled task creation with suspicious
+//              commands — a common persistence mechanism used
+//              by attackers after initial compromise.
+// Data Source: SecurityEvent / DeviceEvents
+// ============================================================
+
+// Detection 1: Scheduled task creation via Windows Event Log
+SecurityEvent
+| where TimeGenerated > ago(24h)
+| where EventID == 4698  // Scheduled task created
+| extend
+    TaskName = tostring(EventData.TaskName),
+    TaskContent = tostring(EventData.TaskContent),
+    CreatedBy = tostring(EventData.SubjectUserName)
+| where TaskContent has_any (
+    "powershell",
+    "cmd.exe",
+    "wscript",
+    "cscript",
+    "mshta",
+    "rundll32",
+    "regsvr32",
+    "certutil",  // Often abused for downloads
+    "bitsadmin",
+    "http://",
+    "https://"
+    )
+| project
+    TimeGenerated,
+    Computer,
+    CreatedBy,
+    TaskName,
+    TaskContent
+| sort by TimeGenerated desc
+
+// ============================================================
+
+// Detection 2: Scheduled task running from unusual locations
+DeviceEvents
+| where TimeGenerated > ago(24h)
+| where ActionType == "ScheduledTaskCreated"
+| where AdditionalFields has_any (
+    "\\AppData\\",    // User AppData — suspicious location
+    "\\Temp\\",       // Temp folder
+    "\\Public\\",     // Public folder
+    "%TEMP%",
+    "%APPDATA%"
+    )
+| project
+    TimeGenerated,
+    DeviceName,
+    AccountName,
+    AdditionalFields
+| sort by TimeGenerated desc
+
+// ============================================================
+// Investigation Steps:
+// 1. Review the full task content — what command does it run?
+// 2. Check who created it and when — after hours creation = suspicious
+// 3. Does the task name look legitimate or random (like "a1b2c3")?
+// 4. Check if the file being executed exists and is signed
+// 5. Review other activity from the same account around the same time
+//
+// Real world context: Scheduled tasks are one of the most common
+// persistence mechanisms. Attackers create them after initial
+// compromise to maintain access even after reboots or remediation.
+// ============================================================

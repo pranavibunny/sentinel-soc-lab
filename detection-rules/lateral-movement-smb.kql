@@ -1,0 +1,55 @@
+// ============================================================
+// Rule: Lateral Movement via SMB / Remote Services
+// MITRE ATT&CK: T1021.002 - Remote Services: SMB/Windows Admin Shares
+// Severity: High
+// Description: Detects potential lateral movement by identifying
+//              unusual remote logins and admin share access across
+//              multiple machines from a single account.
+// Data Source: SecurityEvent
+// ============================================================
+
+// Step 1: Find accounts logging into multiple machines remotely
+let SuspiciousAccounts =
+    SecurityEvent
+    | where TimeGenerated > ago(1h)
+    | where EventID == 4624  // Successful logon
+    | where LogonType in (3, 10)  // Network logon (3) or RemoteInteractive (10)
+    | where AccountType == "User"
+    | where Account !endswith "$"  // Exclude machine accounts
+    | summarize
+        MachinesAccessed = dcount(Computer),
+        MachineList = make_set(Computer),
+        LogonCount = count()
+        by Account, IpAddress
+    | where MachinesAccessed >= 3  // Same account accessing 3+ machines = suspicious
+    | project Account, IpAddress, MachinesAccessed, MachineList, LogonCount;
+
+// Step 2: Enrich with admin share access
+SecurityEvent
+| where TimeGenerated > ago(1h)
+| where EventID == 5140  // Network share accessed
+| where ShareName has_any ("ADMIN$", "C$", "IPC$")  // Admin shares
+| join kind=inner SuspiciousAccounts on Account
+| project
+    TimeGenerated,
+    Account,
+    IpAddress,
+    Computer,
+    ShareName,
+    MachinesAccessed,
+    MachineList,
+    LogonCount
+| sort by MachinesAccessed desc
+
+// ============================================================
+// Investigation Steps:
+// 1. Is this account a service account or admin? — may be legitimate
+// 2. Is this activity during business hours or after hours?
+// 3. Was there a failed logon before the successful one? — credential attack
+// 4. What processes ran on the remote machines after the logon?
+// 5. Check if the source IP matches the user's usual workstation
+//
+// Note: Lateral movement is one of the key indicators in the
+// Cyber Kill Chain (Actions on Objectives phase). Early detection
+// here limits the blast radius of an attack significantly.
+// ============================================================

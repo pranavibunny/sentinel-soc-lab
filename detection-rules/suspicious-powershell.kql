@@ -1,0 +1,56 @@
+// ============================================================
+// Rule: Suspicious PowerShell Execution
+// MITRE ATT&CK: T1059.001 - Command and Scripting Interpreter: PowerShell
+// Severity: High
+// Description: Detects PowerShell execution with suspicious flags
+//              commonly used in malware, fileless attacks, and
+//              post-exploitation activity.
+// Data Source: DeviceProcessEvents (MDE) / SecurityEvent
+// ============================================================
+
+DeviceProcessEvents
+| where TimeGenerated > ago(24h)
+| where FileName =~ "powershell.exe" or FileName =~ "pwsh.exe"
+| where ProcessCommandLine has_any (
+    "-enc",           // Encoded command — often used to hide payload
+    "-encodedcommand",
+    "-nop",           // No profile — bypasses security controls
+    "-noprofile",
+    "-w hidden",      // Hidden window — evasion
+    "-windowstyle hidden",
+    "iex",            // Invoke-Expression — executes strings as code
+    "invoke-expression",
+    "downloadstring", // Downloads and executes from internet
+    "webclient",
+    "bypass",         // Execution policy bypass
+    "frombase64string" // Base64 decoding — common in encoded payloads
+    )
+| project
+    TimeGenerated,
+    DeviceName,
+    AccountName,
+    ProcessCommandLine,
+    InitiatingProcessFileName,  // What launched PowerShell
+    InitiatingProcessCommandLine,
+    FolderPath
+| sort by TimeGenerated desc
+
+// ============================================================
+// Why these flags matter (from real EDR experience):
+//
+// -enc / -encodedcommand: Attackers encode payloads in base64
+//   to bypass string-based detection. This is one of the most
+//   common indicators I investigated at enterprise scale.
+//
+// InitiatingProcessFileName: Check what launched PowerShell.
+//   winword.exe -> powershell.exe = macro attack (T1566)
+//   outlook.exe -> powershell.exe = phishing execution
+//   These parent-child relationships are high priority alerts.
+//
+// Investigation Steps:
+// 1. Decode any base64 encoded commands
+// 2. Check the parent process — what launched PowerShell?
+// 3. Review network connections made after execution
+// 4. Check for persistence mechanisms created
+// 5. Isolate endpoint if confirmed malicious
+// ============================================================

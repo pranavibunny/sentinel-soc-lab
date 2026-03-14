@@ -1,0 +1,47 @@
+// ============================================================
+// Rule: Brute Force Login Detection
+// MITRE ATT&CK: T1110 - Brute Force
+// Severity: High
+// Description: Detects multiple failed login attempts from the
+//              same IP address within a short time window —
+//              a common indicator of password spraying or
+//              brute force attacks.
+// Data Source: SecurityEvent (Windows Event Logs)
+// ============================================================
+
+// In MDE Advanced Hunting equivalent:
+// DeviceLogonEvents | where ActionType == "LogonFailed"
+
+SecurityEvent
+| where TimeGenerated > ago(1h)
+| where EventID == 4625  // Failed logon
+| where AccountType == "User"
+| summarize
+    FailedAttempts = count(),
+    TargetAccounts = make_set(TargetUserName),
+    FirstAttempt = min(TimeGenerated),
+    LastAttempt = max(TimeGenerated)
+    by IpAddress, Computer
+| where FailedAttempts >= 10
+| extend
+    AttackDuration = datetime_diff('minute', LastAttempt, FirstAttempt),
+    AccountCount = array_length(TargetAccounts)
+| project
+    IpAddress,
+    Computer,
+    FailedAttempts,
+    AccountCount,
+    TargetAccounts,
+    FirstAttempt,
+    LastAttempt,
+    AttackDuration
+| sort by FailedAttempts desc
+
+// ============================================================
+// Investigation Steps:
+// 1. Check if the source IP is internal or external
+// 2. Review which accounts were targeted — admin accounts = higher priority
+// 3. Check if any of the targeted accounts had a successful login after failures
+// 4. Correlate with network logs to identify the source
+// 5. If external IP — consider blocking at firewall level
+// ============================================================
